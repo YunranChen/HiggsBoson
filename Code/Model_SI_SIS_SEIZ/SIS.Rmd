@@ -1,0 +1,85 @@
+---
+title: "SI"
+author: "Junwen Huang"
+date: "2018/4/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(pracma)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+load("~/STA650/Final Project/Modeling/SISdataset_small_consN.Rdata")
+data = SIS_df_s_c
+```
+
+```{r}
+derivative = function(y, para){
+  S = y[1]  
+  I = y[2]  
+  
+  npop = S+I
+  dS = (-para[2]*S*I + para[1]*I)/npop         
+  dI = (para[2]*S*I - para[1]*I)/npop
+  vout = c(dS,dI)
+  
+  return(vout)
+}
+```
+
+```{r}
+recurrence = function(f, dt, T, y0, para){
+  tout = seq(T[1], T[2], by = dt)
+  yout = matrix(0, length(tout), 2)
+  yout[1,] = y0
+  
+  for(j in 2:length(tout)){
+    former = yout[j-1,]
+    d = f(former, para)
+    new = dt * d + former
+    yout[j,] = new
+  }
+  
+  out = cbind(tout, yout)
+  
+  return(out)
+}
+```
+
+```{r}
+error = function(para){
+  
+  pred = recurrence(derivative, dt, c(time[1], time[length(time)]), c(S0, I0), para)
+  S = pred[,2]
+  I = pred[,3]
+  
+  index = pred[,1][pred[,1] %in% time]
+  sub = c(S[index], I[index])
+  
+  true = c(data[, 2] %>% as.numeric(), data[, 3] %>% as.numeric())
+  abs_error = abs(sub - true)
+  return(abs_error)
+}
+```
+
+```{r}
+dt = 1
+data = as.matrix(data)
+time = 1:length(data[,1])
+S0 = data[1,2] %>% as.numeric()
+I0 = data[1,3] %>% as.numeric()
+para = c(1,1)
+fit = lsqnonlin(error, para)
+para = fit$x
+pred = recurrence(derivative, dt, c(time[1], time[length(time)]), c(S0, I0), para)
+SIS_whole = as.data.frame(pred)
+colnames(SIS_whole) = c("hour", "S_n", "I_n")
+save(SIS_whole, file = "SIS_whole.Rdata")
+```

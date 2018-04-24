@@ -1,0 +1,109 @@
+---
+title: "SI"
+author: "Junwen Huang"
+date: "2018/4/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(pracma)
+library(dplyr)
+library(ggplot2)
+```
+
+# Load this for the whole network
+
+```{r}
+load("~/STA650/Final Project/Modeling/SISdataset_small_consN.Rdata")
+data = SIS_df_s_c
+```
+
+# Load this for the retweet network
+
+```{r}
+# load("~/STA650/Final Project/Modeling/SISdataset_small_consN_onlyretweet.Rdata")
+# data = SIS_df_s_c_r
+```
+
+```{r}
+derivative = function(y, beta){
+  S = y[1]  
+  I = y[2]  
+  
+  npop = S+I
+  dS = - beta*S*I/npop            
+  dI = beta*S*I/npop
+  vout = c(dS,dI)
+  
+  return(vout)
+}
+```
+
+```{r}
+recurrence = function(f, dt, T, y0, beta){
+  tout = seq(T[1], T[2], by = dt)
+  yout = matrix(0, length(tout), 2)
+  yout[1,] = y0
+  
+  for(j in 2:length(tout)){
+    former = yout[j-1,]
+    d = f(former, beta)
+    new = dt * d + former
+    yout[j,] = new
+  }
+  
+  out = cbind(tout, yout)
+  
+  return(out)
+}
+```
+
+```{r}
+error = function(beta){
+  
+  pred = recurrence(derivative, dt, c(time[1], time[length(time)]), c(S0, I0), beta)
+  S = pred[,2]
+  I = pred[,3]
+  
+  index = pred[,1][pred[,1] %in% time]
+  sub = c(S[index], I[index])
+  
+  true = c(data[, 2] %>% as.numeric(), data[, 3] %>% as.numeric())
+  abs_error = abs(sub - true)
+  return(abs_error)
+}
+```
+
+```{r}
+# dt = 1
+# data = as.matrix(data)
+# time = 1:length(data[,1])
+# S0 = data[1,2] %>% as.numeric()
+# I0 = data[1,3] %>% as.numeric()
+# beta = 1
+# fit = lsqnonlin(error, beta)
+# beta = fit$x
+# pred = recurrence(derivative, dt, c(time[1], time[length(time)]), c(S0, I0), beta)
+# SI_retweet = as.data.frame(pred)
+# colnames(SI_retweet) = c("hour", "S_n", "I_n")
+# save(SI_retweet, file = "SI_retweet.Rdata")
+```
+
+```{r}
+dt = 1
+data = as.matrix(data)
+time = 1:length(data[,1])
+S0 = data[1,2] %>% as.numeric()
+I0 = data[1,3] %>% as.numeric()
+beta = 1
+fit = lsqnonlin(error, beta)
+beta = fit$x
+pred = recurrence(derivative, dt, c(time[1], time[length(time)]), c(S0, I0), beta)
+SI_whole = as.data.frame(pred)
+colnames(SI_whole) = c("hour", "S_n", "I_n")
+save(SI_whole, file = "SI_whole.Rdata")
+```

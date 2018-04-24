@@ -1,0 +1,564 @@
+---
+title: "higgs"
+author: "YunranChen"
+date: "4/1/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	eval = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	include = FALSE
+)
+setwd("/Users/yunranchen/GoDuke/18Spring/sta650/650project/Higgs Boson")
+library(igraph)
+library(readr)
+library(dplyr)
+library(anytime)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(purrr)
+library(statnet)
+#-------------------------------------------------------------------------
+theme_set(theme_bw())
+#--------------------------------------------------------------------------
+#data_total=read_table2(file = "higgs-activity_time.txt",col_names = FALSE,col_types = #cols(X1=col_integer(),X2=col_integer(),X3="?",X4=col_character()))
+#colnames(data_total)=c("A","B","ori_time","interact")
+#data_total=data_total %>% mutate(time=anytime(ori_time,tz="GMT"),date=anydate(ori_time,tz="GMT"),hour=format(time, format="%Y-%m-%d %H:00:00")%>%anytime(.,tz="GMT"),minute=format(time, format="%Y-%m-%d %H:%M:00")%>%anytime(.,tz="GMT"))
+#data_total$interact[data_total$interact=="MT"]="mention"
+#data_total$interact[data_total$interact=="RE"]="reply"
+#data_total$interact[data_total$interact=="RT"]="retweet"
+#save(data_total, file="raw_data.Rdata")
+#------------------------------------------------------------------------
+load(file="raw_data.Rdata")
+
+```
+
+## number of active users -- time
+
+```{r}
+
+data_act=data_total %>% group_by(hour,interact) %>% summarise(count=n()) 
+
+ggplot(data_act,mapping = aes(x=hour,y=count,linetype=interact,color=interact))+geom_line()+ylab("active account")+xlab("hourly")+geom_vline(xintercept = ("2012-07-04 08:00:00")%>%ymd_hms(.,tz="GMT"))
+
+#data_act=data_total %>% group_by(time) %>% summarise(count=n()) 
+#ggplot(data_act,mapping = aes(x=time,y=count))+geom_line()
+
+data_act=data_total %>% mutate(minute_gmt=anytime(minute,tz = "GMT"))%>% group_by(minute,interact) %>% summarise(count=n()) 
+ggplot(data_act,mapping = aes(x=minute,y=count,color=interact))+geom_line()+ylab("active account")+xlab("minute")+geom_vline(xintercept = ("2012-07-04 08:00:00")%>%ymd_hms(.,tz="GMT"))
+
+##for science news, retweet is the most popular way for public to express on internet. 
+
+##prevalence: how many people involve in the retweet network : 256491
+nodes=data_total[data_total$interact=="retweet",] %>%select (A,B) 
+c(nodes$A,nodes$B) %>% unique() %>% length()
+
+##duration: how long it takes to achieve outbreak 1hr55min
+
+rt_data=data_total[data_total$interact=="retweet",]
+
+rt_data%>% group_by(minute) %>% summarise(count=n())%>%arrange(desc(count))%>% .[1,] 
+
+
+
+```
+
+
+## analysis below only consider rt
+
+```{r}
+rt_data=data_total[data_total$interact=="retweet",] #flip
+rt_data %>% mutate(DateTime=cut(time,breaks = "15 min") %>% anytime(.,tz="GMT"))%>% group_by(DateTime) %>% summarise(count=n())%>% arrange(DateTime) 
+
+```
+
+# dynamic network --time 
+
+## Do not run this chunck
+
+```{r}
+#visualization based on every 15 min 
+rt_net= rt_data %>% group_by(DateTime=cut(time,breaks = "15 min")%>%anytime(.,tz="GMT")) %>%
+  mutate(hm=paste0(hour(DateTime),":",minute(DateTime))) %>% filter(hm=="9:51") %>% 
+  select(B,A,DateTime) %>% ungroup()
+#net=graph_from_data_frame(rt_net,directed = TRUE)
+net_list=split(rt_net,rt_net$DateTime)
+net_list_copy=net_list
+sl_df=net_list_copy[[4]]
+net_list[[4]]=NULL
+#p = progress_estimated(length(net_list), min_time = 0)
+
+draw_net=function(df,time_input=0){
+net_rt_day=graph_from_data_frame(df[,1:2],directed = TRUE)
+  
+#Visualization-----------------------------------------------------------------------
+
+#deg <- degree(net_rt_day, mode="out") %>% 
+V(net_rt_day)$size <- 3
+V(net_rt_day)$label <- NA
+V(net_rt_day)$frame.color <- "white"
+#V(net_rt_day)$color <- "orange"
+# Set edge width based on weight:
+#E(net)$width <- E(net)$weight/6
+
+#change arrow size and edge color:
+E(net_rt_day)$arrow.size <- .2
+E(net_rt_day)$edge.color <- "gray80"
+#E(net)$width <- 1+E(net)$weight/12
+
+if (as.logical(time_input)){
+  png(filename=paste0(time_input,".png"))
+  plot(net_rt_day,layout=layout_with_dh,vertex.color=adjustcolor(col = "orange",alpha.f = .5),main=time_input)
+  
+}else{
+  png(filename=paste0(unique(df$DateTime),".png"))
+plot(net_rt_day,layout=layout_with_dh,vertex.color=adjustcolor(col = "orange",alpha.f = .5),main=unique(df$DateTime))
+}
+dev.off()
+
+}
+sapply(net_list,draw_net)
+```
+
+```{r}
+#visualization based on 40% samples for the network
+l_time=net_list_copy[[4]]$DateTime %>% unique()
+l_df=l_df %>% select(-DateTime)
+hist=l_df %>% group_by(B) %>% summarise(count=n(),prop=ceiling(n()*0.4)) %>% arrange(desc(count))
+
+ss_df=function(i){
+s_df=l_df %>% filter(B==as.numeric(hist[i,1])) %>% sample_frac(tbl = .,size =0.4)
+return(s_df)
+}
+s_df=map_df(1:nrow(hist),~ss_df(.x))
+hist_s=s_df%>% group_by(B) %>% summarise(count=n(),prop=ceiling(n()*0.4)) %>% arrange(desc(count))
+ggplot(hist_s,mapping = aes(x=B,y=count))+geom_line()
+draw_net(df = s_df,time_input = l_time)
+
+```
+
+# statistics for each time
+
+##stars;triangles;
+
+
+```{r}
+rt_net= data_total[data_total$interact=="retweet",] %>% select(B,A,hour)
+net_list_copy = split(rt_net,rt_net$hour)
+
+summary_net = function(df){
+  net_rt_day=graph_from_data_frame(df[,1:2],directed = TRUE)
+  density=ecount(net_rt_day)/(vcount(net_rt_day)*(vcount(net_rt_day)-1))
+  el_net=get.edgelist(net_rt_day)
+  return(c(summary(el_net ~ edges + ostar(2) ),density=density))
+}
+
+temp = sapply(net_list_copy,summary_net) %>% t() %>% as.data.frame()
+temp = temp %>% mutate(time = rownames(temp))
+temp$time = as.POSIXct(temp$time)
+library("reshape2")
+data_long = melt(temp, id="time")
+
+png(filename="summary.png")
+ggplot(data=data_long, aes(x=time, y=value)) + 
+  geom_line() + 
+  facet_grid(variable~., scales = "free_y") +
+  ylab("count") +
+  xlab("date")
+```
+
+##power-law: the fraction of node with k degree
+
+```{r}
+#rt_data = data_total[data_total$interact=="retweet",]
+network_total = graph_from_data_frame(rt_data[,c(2,1)],directed = TRUE)
+
+in_dist = degree_distribution(network_total, mode = "in")
+in_dist_df = data.frame(degree = 1:length(in_dist), prob = in_dist, type = rep("in", length(in_dist)))
+
+out_dist = degree_distribution(network_total, mode = "out")
+out_dist_df = data.frame(degree = 1:length(out_dist), prob = out_dist, type = rep("out", length(out_dist)))
+
+df_total = rbind(in_dist_df, out_dist_df)
+df_total$prob = log10(df_total$prob)
+
+png(filename="ispower.png")
+ggplot(data=df_total, aes(x=degree, y=prob)) + 
+  geom_line() +
+  facet_grid(.~type, scales = "free_x") +
+  ylab("probabilty") +
+  xlab("degree") + 
+  scale_y_continuous(breaks=c(0, -2, -4), labels = c(expression(10^0), expression(10^{-2}), expression(10^{-4})))
+```
+
+## Density
+# The proportion of present edges from all possible ties.
+
+```{r}
+library(igraph)
+rt_net= data_total[data_total$interact=="retweet",] %>% select(B,A,hour)
+net_list_copy = split(rt_net,rt_net$hour)
+df=net_list_copy[[1]]
+summary_net = function(df){
+  net_rt_day=graph_from_data_frame(df[,1:2],directed = TRUE)
+  density=ecount(net_rt_day)/(vcount(net_rt_day)*(vcount(net_rt_day)-1))
+  centr_closeness=igraph::closeness(net_rt_day, mode="out",weight=NA) 
+  centr_eigen=eigen_centrality(net_rt_day, directed=T, weights=NA)
+  centr_betweenness=igraph::betweenness(net_rt_day, directed=T, weights=NA)
+  return(list(density=density,centr_closeness=centr_closeness,centr_eigen=centr_eigen,
+              centr_betweenness=centr_betweenness))
+}
+
+temp = sapply(net_list_copy,summary_net) %>% t() %>% as.data.frame()
+temp = temp %>% mutate(time = rownames(temp))
+temp$time = as.POSIXct(temp$time)
+library("reshape2")
+data_long = melt(temp, id="time")
+
+png(filename="summary.png")
+ggplot(data=data_long, aes(x=time, y=value)) + 
+  geom_line() + 
+  facet_grid(variable~., scales = "free_y") +
+  ylab("count") +
+  xlab("date")
+
+```
+
+
+
+## Below Network visulization
+
+
+##follow-up some important node -- using one is enough
+
+##discard some important node -- care about individuals
+
+## Other ways to represent a network -- colorRampPalette degree for color
+
+##http://statnet.csde.washington.edu/workshops/SUNBELT/current/ndtv/ndtv_workshop.html#introduction-to-this-workshop 画个信息图
+
+
+-------------------------------------------------------------------------------------------------------------
+
+##SIS--hourly
+
+```{r}
+#data_social=read_table2(file = "higgs-social_network.edgelist",col_names = FALSE,col_types = cols(X1=col_integer(),X2=col_integer()))
+#colnames(data_social)=c("A","B")
+#save(data_social, file="data_friendship.Rdata")
+#------------------------------------------------------------------------
+rt_data=data_total[data_total$interact=="retweet",] 
+load(file="data_friendship.Rdata") #followers network
+```
+
+```{r}
+## get rid of the retweet user.--rt_data_s
+rt_data_s=rt_data[!duplicated(rt_data$A),]
+#save(rt_data_s, file="data_rt_small.Rdata")
+```
+
+```{r}
+load(file="data_rt_small.Rdata")
+#get the infected number
+Is_hourly=rt_data_s%>%group_by(hour,A)%>%summarise(flag=1)%>%select(-flag)
+I_n_hourly=Is_hourly%>%ungroup()%>%group_by(hour)%>%summarise(I_n=n())
+```
+
+
+### SIS data -- get rid of the retweet user. +  constant N
+
+```{r}
+
+#set population N as constant
+Na=rt_data_s%>%pull(A)%>%unique(.)
+Nb=rt_data_s%>%pull(B)%>%unique(.)
+N=c(Na,Nb)%>%unique(.)%>%length(.)
+
+SIS_df_s_c=I_n_hourly%>%mutate(I_n=I_n_hourly_ab,S_n=N_social_total-I_n) %>%select(hour,S_n,I_n)
+#I_n%>%accumulate(sum)
+save(SIS_df_s_c, file="SISdataset_small_consN.Rdata")
+SIS_df_s_c_r=I_n_hourly%>%mutate(I_n=I_n_hourly_ab,S_n=N-I_n) %>%select(hour,S_n,I_n)
+save(SIS_df_s_c_r, file="SISdataset_small_consN_onlyretweet.Rdata")
+```
+
+```{r}
+load("SISdataset_small_consN.Rdata")
+```
+
+```{r}
+load("/Users/yunranchen/GoDuke/18Spring/sta650/650project/Higgs Boson/rstudio-export/pred0.Rdata")
+load("/Users/yunranchen/GoDuke/18Spring/sta650/650project/Higgs Boson/rstudio-export/pred1.Rdata")
+datadf=SIS_df_s_c%>%mutate(SI_I_n=pred0%>%pull(I_n),SI_S_n=pred0%>%pull(S_n),SIS_I_n=pred1%>%pull(I_n),SIS_S_n=pred1%>%pull(S_n))
+SIS_ggdf_s_c=gather(datadf,key = SIS,value = value,-hour)
+ggplot(data = SIS_ggdf_s_c,mapping = aes(x = hour,y = value))+geom_line() +facet_grid(SIS~., scales = "free_y")
+
+ggplot(data = SIS_ggdf_s_c,mapping = aes(x = hour,y = value,color=SIS))+geom_line()
+```
+
+
+### SIS data -- get rid of the retweet user. +  inconstant N
+
+```{r}
+
+#get the suspected number: the follower of A are suspected. For A retweet B.
+follower_ls=Is_hourly%>%group_by(hour)%>%summarise(list=list(A))%>%pull(list)
+flls=follower_ls%>%accumulate(union)
+S_hourly_ls=map(.x = follower_ls,.f = ~data_social%>%filter(A%in%.x)%>%pull(B)%>%unique(.))
+lls=S_hourly_ls%>%accumulate(union)
+#get the suspected number: the follower of B are suspected. For A retweet B.
+Is_hourly_b=rt_data_s%>%group_by(hour,B)%>%summarise(flag=1)%>%select(-flag)
+follower_ls_b=Is_hourly_b%>%group_by(hour)%>%summarise(list=list(B))%>%pull(list)
+flls_b=follower_ls_b%>%accumulate(union) #infected list for B
+S_hourly_ls_b=map(.x = follower_ls_b,.f = ~data_social%>%filter(A%in%.x)%>%pull(B)%>%unique(.))
+lls_b=S_hourly_ls_b%>%accumulate(union) #suspected list for B
+
+
+nhrs=length(lls)
+Slls_ab_total=map(1:nhrs,~union(lls[[.x]],lls_b[[.x]]))
+flls_ab_total=map(1:nhrs,~union(flls[[.x]],flls_b[[.x]])) #accumulated infected list
+Slls=map(1:nhrs,~setdiff(Slls_ab_total[[.x]],flls_ab_total[[.x]])) #accumulated suspected list
+S_n_hourly=map_dbl(.x = Slls,.f = ~length(.x))
+I_n_hourly_ab=map_dbl(.x = flls_ab_total,.f = ~length(.x))
+
+#SIS dataframe
+SIS_df_s_ic=I_n_hourly%>%mutate(I_n=I_n%>%accumulate(sum),S_n=S_n_hourly,I_n_ab=I_n_hourly_ab)%>%select(-I_n)
+SIS_df_s_ic
+#save(SIS_df_s_ic, file="SISdataset_small_inconsN.Rdata")
+
+```
+
+```{r}
+load("SISdataset_small_inconsN.Rdata")
+```
+
+```{r}
+SIS_ggdf_s_ic=gather(SIS_df_s_ic,key = SIS,value = value,-hour)
+ggplot(data = SIS_ggdf_s_ic,mapping = aes(x = hour,y = value))+geom_line() +facet_grid(SIS~., scales = "free_y")
+
+ggplot(data = SIS_ggdf_s_ic,mapping = aes(x = hour,y = value,color=SIS))+geom_line()
+```
+
+### SIS data -- get rid of the retweet user. +  constant N + memoryless
+
+```{r}
+
+#get the suspected number: the follower of A are suspected. For A retweet B.
+follower_ls=Is_hourly%>%group_by(hour)%>%summarise(list=list(A))%>%pull(list)
+
+S_n_hourly=map_dbl(.x = follower_ls,.f = ~data_social%>%filter(A%in%.x)%>%pull(B)%>%setdiff(.,.x)%>%unique(.)%>%length(.))
+
+#SIS dataframe
+SIS_df_s_ic_ml=I_n_hourly%>%mutate(S_n=S_n_hourly)
+SIS_df_s_ic_ml
+#save(SIS_df_s_ic_ml, file="SISdataset_small_inconsN_memoryless.Rdata")
+
+```
+
+```{r}
+load("SISdataset_small_inconsN_memoryless.Rdata")
+```
+
+```{r}
+SIS_ggdf_s_ic_ml=gather(SIS_df_s_ic_ml,key = SIS,value = value,-hour)
+ggplot(data = SIS_ggdf_s_ic_ml,mapping = aes(x = hour,y = value))+geom_line() +facet_grid(SIS~., scales = "free_y")
+
+ggplot(data = SIS_ggdf_s_ic_ml,mapping = aes(x = hour,y = value,color=SIS))+geom_line()
+```
+
+##SEIZ--hourly
+
+```{r}
+load(file="data_friendship.Rdata") #followers network
+load(file="data_rt_small.Rdata") #rt network
+
+#get the infected number
+Is_hourly=rt_data_s%>%group_by(hour,A)%>%summarise(flag=1)%>%select(-flag)
+I_n_hourly=Is_hourly%>%ungroup()%>%group_by(hour)%>%summarise(I_n=n())
+#get the suspected number: the follower of A are suspected. For A retweet B.
+follower_ls=Is_hourly%>%group_by(hour)%>%summarise(list=list(A))%>%pull(list)
+flls=follower_ls%>%accumulate(union) #all infected A list
+S_hourly_ls=map(.x = follower_ls,.f = ~data_social%>%filter(A%in%.x)%>%pull(B)%>%unique(.))
+lls=S_hourly_ls%>%accumulate(union) #all infected A's followers list
+#get the suspected number: the follower of B are suspected. For A retweet B.
+Is_hourly_b=rt_data_s%>%group_by(hour,B)%>%summarise(flag=1)%>%select(-flag)
+follower_ls_b=Is_hourly_b%>%group_by(hour)%>%summarise(list=list(B))%>%pull(list)
+flls_b=follower_ls_b%>%accumulate(union) #infected list for B
+S_hourly_ls_b=map(.x = follower_ls_b,.f = ~data_social%>%filter(A%in%.x)%>%pull(B)%>%unique(.))
+lls_b=S_hourly_ls_b%>%accumulate(union) #suspected list for B
+#Combine the suspected from a and b. infected from a and b
+nhrs=length(lls)
+Slls_ab_total=map(1:nhrs,~union(lls[[.x]]%>%unique(.),lls_b[[.x]]%>%unique(.))) #accumulated infected list's followers
+flls_ab_total=map(1:nhrs,~union(flls[[.x]]%>%unique(.),flls_b[[.x]]%>%unique(.))) #accumulated infected list
+Sflls_ab_total=map(1:nhrs,~union(Slls_ab_total[[.x]],flls_ab_total[[.x]])) #accumulated infected and their friends
+Slls=map(1:nhrs,~setdiff(Slls_ab_total[[.x]],flls_ab_total[[.x]])) #accumulated suspected list
+S_n_hourly=map_dbl(.x = Slls,.f = ~length(.x))
+I_n_hourly_ab=map_dbl(.x = flls_ab_total,.f = ~length(.x))
+
+###I:retweet at time t accumulated (has retweeted)
+I_n_hourly_ab
+###S:has not heard about the news yet
+A_social=data_social%>%pull(A)%>%unique(.)
+B_social=data_social%>%pull(B)%>%unique(.)
+list_total=union(A_social,B_social) #all the people heard the news eventually
+N_social_total=list_total%>%length(.)
+S_n_hourly_ab=map_dbl(.x=Sflls_ab_total,.f = ~setdiff(list_total,.x)%>%unique(.)%>%length(.))
+###Z:has heard but choose not to retweet it
+Na=rt_data_s%>%pull(A)%>%unique(.)
+Nb=rt_data_s%>%pull(B)%>%unique(.)
+I_and_follower_total_ls=union(Na,Nb) #all the people tweet about it
+Z_n_hourly_ab=map_dbl(.x = Slls,.f = ~setdiff(.x,I_and_follower_total_ls)%>%unique(.)%>%length(.))
+###E:has received the news but take time to tweet
+list_total_not=setdiff(list_total,I_and_follower_total_ls) #heard the news but never retweet
+E_n_hourly_ab=map_dbl(.x = Slls,.f = ~setdiff(.x,list_total_not)%>%unique(.)%>%length(.))
+
+#SEIZ dataframe
+SEIZ_df_s_ic=I_n_hourly%>%mutate(S_n=S_n_hourly_ab,E_n=E_n_hourly_ab,I_n=I_n_hourly_ab,Z_n=Z_n_hourly_ab,N=sum(S_n+E_n+I_n+Z_n))
+SEIZ_df_s_ic%>%select(-N,-hour)%>%as.matrix(.)%>%apply(.,1,sum)
+
+SIS_ggdf_s_ic_ml=gather(SEIZ_df_s_ic%>%select(-N),key = SIS,value = value,-hour)
+ggplot(data = SIS_ggdf_s_ic_ml,mapping = aes(x = hour,y = value))+geom_line() +facet_grid(SIS~., scales = "free_y")
+
+ggplot(data = SIS_ggdf_s_ic_ml,mapping = aes(x = hour,y = value,color=SIS))+geom_line()
+
+save(SEIZ_df_s_ic, file="SEIZdataset_small_inconsN.Rdata")
+load(file = "SEIZdataset_small_inconsN.Rdata")
+```
+
+##Result_SI
+
+```{r}
+load("SISdataset_small_consN_onlyretweet.Rdata")
+load("rstudio-export/retweet_SI.Rdata")
+#load("rstudio-export/SI_retweet.Rdata")
+
+rt_df_res=SIS_df_s_c_r%>%mutate(SI_I_n=retweet_SI%>%pull(I_n),SI_S_n=retweet_SI%>%pull(S_n))
+rt_ggdf_res=gather(rt_df_res,key = key,value = value,-hour)%>%mutate(State="S",Model="Estimate")
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="SI_I_n"),"State"]="I"
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="S_n"),"Model"]="True"
+rt_ggdf_res
+
+##Result_SIS
+
+err_s=((rt_df_res%>%pull(S_n))-(rt_df_res%>%pull(SI_S_n)))^2 %>% mean(.)
+r2_s=err_s/((rt_df_res%>%pull(S_n))^2%>%mean(.))
+r2_s%>%format(.,digits=3)
+err_i=((rt_df_res%>%pull(I_n))-(rt_df_res%>%pull(SI_I_n)))^2 %>% mean(.)
+r2_i=err_i/((rt_df_res%>%pull(I_n))^2%>%mean(.))
+r2_i
+
+png(filename="SI_rt_res.png")
+ggplot(data = rt_ggdf_res,mapping = aes(x = hour,y = value,color=State,linetype=Model))+geom_line()+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 200000, label = paste0("Error_I=",r2_i%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 175000, label = paste0("Error_S=",r2_s%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 150000, label = paste0(as.expression("Beta="),0.1141115%>%format(.,digits=3)))
+dev.off()
+
+#beta for SI & retweet: 0.1141115
+
+```
+
+##Result_SIS
+
+```{r}
+#beta for SI & whole network: 0.07813026
+#alpha, beta for SIS & whole network: 4.657006e+04 2.171945e-01
+
+a=load("SISdataset_small_consN.Rdata")
+load("rstudio-export/pred0.Rdata")
+load("rstudio-export/pred1.Rdata")
+
+rt_df_res=SIS_df_s_c%>%mutate(SIS_I_n=pred1%>%pull(I_n),SIS_S_n=pred1%>%pull(S_n))
+rt_ggdf_res=gather(rt_df_res,key = key,value = value,-hour)%>%mutate(State="S",Model="SIS_Estimate")
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="SI_I_n")|(rt_ggdf_res%>%pull(key)=="SIS_I_n"),"State"]="I"
+#rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="S_n"),"SI"]="True"
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="S_n"),"Model"]="True"
+
+rt_ggdf_res
+
+
+
+##Result_SIS
+
+err_s=((rt_df_res%>%pull(S_n))-(rt_df_res%>%pull(SIS_S_n)))^2 %>% mean(.)
+r2_s=err_s/((rt_df_res%>%pull(S_n))^2%>%mean(.))
+r2_s
+err_i=((rt_df_res%>%pull(I_n))-(rt_df_res%>%pull(SIS_I_n)))^2 %>% mean(.)
+r2_i=err_i/((rt_df_res%>%pull(I_n))^2%>%mean(.))
+r2_i
+
+png(filename="SIS_nt_res.png")
+ggplot(data = rt_ggdf_res,mapping = aes(x = hour,y = value,color=State,linetype=Model))+geom_line()+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 200000, label = paste0("Error_I=",r2_i%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 175000, label = paste0("Error_S=",r2_s%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 150000, label = paste0(as.expression("Beta="),2.171945e-01%>%format(.,digits=3)))+
+  annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 125000, label = paste0(as.expression("Alpha="),4.657006e+04%>%format(.,digits=3)))
+dev.off()
+
+
+rt_df_res=SIS_df_s_c%>%mutate(SI_I_n=pred0%>%pull(I_n),SI_S_n=pred0%>%pull(S_n))
+rt_ggdf_res=gather(rt_df_res,key = key,value = value,-hour)%>%mutate(State="S",Model="SI_Estimate")
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="SI_I_n"),"State"]="I"
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="S_n"),"Model"]="True"
+#rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="S_n"),"SIS"]="True"
+
+rt_ggdf_res
+
+
+
+##Result_SIS
+
+err_s=((rt_df_res%>%pull(S_n))-(rt_df_res%>%pull(SI_S_n)))^2 %>% mean(.)
+r2_s=err_s/((rt_df_res%>%pull(S_n))^2%>%mean(.))
+r2_s
+err_i=((rt_df_res%>%pull(I_n))-(rt_df_res%>%pull(SI_I_n)))^2 %>% mean(.)
+r2_i=err_i/((rt_df_res%>%pull(I_n))^2%>%mean(.))
+r2_i
+
+png(filename="SIS_nt_res.png")
+ggplot(data = rt_ggdf_res,mapping = aes(x = hour,y = value,color=State,linetype=Model))+geom_line()+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 200000, label = paste0("Error_I=",r2_i%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 175000, label = paste0("Error_S=",r2_s%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 150000, label = paste0(as.expression("Beta="),0.07813026%>%format(.,digits=3)))
+dev.off()
+
+
+```
+
+#SEIZ
+
+```{r}
+SEIZ_df_s_ic%>%select(-hour,-N)%>%as.matrix()%>%apply(.,1,sum)
+a=load("rstudio-export/SEIZ_pred_final!.Rdata")
+
+test=SEIZ_pred%>%as_tibble(.)%>%mutate(hour=SEIZ_df_s_ic%>%pull(hour))
+SIS_ggdf_s_ic_ml=gather(SEIZ_pred%>%as_tibble(.),key = SIS,value = value,-hour)
+ggplot(data = SIS_ggdf_s_ic_ml,mapping = aes(x = hour,y = value))+geom_line() +facet_grid(SIS~., scales = "free_y")
+
+ggplot(data = SIS_ggdf_s_ic_ml,mapping = aes(x = hour,y = value,color=SIS))+geom_line()
+
+
+rt_df_res=SEIZ_df_s_ic%>%mutate(SEIZ_I_n=SEIZ_pred%>%pull(I_n),SEIZ_S_n=SEIZ_pred%>%pull(S_n),SEIZ_E_n=SEIZ_pred%>%pull(E_n),SEIZ_Z_n=SEIZ_pred%>%pull(Z_n))%>%select(-N)
+rt_ggdf_res=gather(rt_df_res,key = key,value = value,-hour)%>%mutate(State="S",Model="SEIZ_Estimate")
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="SEIZ_I_n"),"State"]="I"
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="E_n")|(rt_ggdf_res%>%pull(key)=="SEIZ_E_n"),"State"]="E"
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="Z_n")|(rt_ggdf_res%>%pull(key)=="SEIZ_Z_n"),"State"]="Z"
+rt_ggdf_res[(rt_ggdf_res%>%pull(key)=="I_n")|(rt_ggdf_res%>%pull(key)=="S_n")|(rt_ggdf_res%>%pull(key)=="E_n")|(rt_ggdf_res%>%pull(key)=="Z_n"),"Model"]="True"
+rt_ggdf_res
+
+##Result_SIS
+
+err_s=((rt_df_res%>%pull(S_n))-(rt_df_res%>%pull(SEIZ_S_n)))^2 %>% mean(.)
+r2_s=err_s/((rt_df_res%>%pull(S_n))^2%>%mean(.))
+r2_s
+err_i=((rt_df_res%>%pull(I_n))-(rt_df_res%>%pull(SEIZ_I_n)))^2 %>% mean(.)
+r2_i=err_i/((rt_df_res%>%pull(I_n))^2%>%mean(.))
+r2_i
+err_e=((rt_df_res%>%pull(E_n))-(rt_df_res%>%pull(SEIZ_E_n)))^2 %>% mean(.)
+r2_e=err_e/((rt_df_res%>%pull(E_n))^2%>%mean(.))
+r2_e
+err_z=((rt_df_res%>%pull(Z_n))-(rt_df_res%>%pull(SEIZ_Z_n)))^2 %>% mean(.)
+r2_z=err_s/((rt_df_res%>%pull(Z_n))^2%>%mean(.))
+r2_z
+
+png(filename="SI_rt_res.png")
+ggplot(data = rt_ggdf_res,mapping = aes(x = hour,y = value,color=State,linetype=Model))+geom_line()+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 400000, label = paste0("Error_I=",r2_i%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 375000, label = paste0("Error_S=",r2_s%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 350000, label = paste0("Error_E=",r2_e%>%format(.,digits=3)))+annotate("text", x = ("2012-07-07 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 325000, label = paste0("Error_Z=",r2_z%>%format(.,digits=3)))+annotate("text", x = ("2012-07-02 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 300000, label = paste0("beta=",-0.35852358%>%format(.,digits=3)))+annotate("text", x = ("2012-07-02 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 275000, label = paste0("b=",0.74996937%>%format(.,digits=3)))+annotate("text", x = ("2012-07-02 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 250000, label = paste0("p=",0.03593720%>%format(.,digits=3)))+annotate("text", x = ("2012-07-02 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 225000, label = paste0("l=",0.11575087%>%format(.,digits=3)))+annotate("text", x = ("2012-07-02 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 200000, label = paste0("rho=",0.14800669%>%format(.,digits=3)))+annotate("text", x = ("2012-07-02 02:00:00")%>%ymd_hms(.,tz="GMT"), y = 175000, label = paste0("rho=",0.01885045%>%format(.,digits=3)))
+dev.off()
+
+#beta is -0.35852358, b is 0.74996937, p is 0.03593720, l is 0.11575087, rho is 0.14800669, epsilon is 0.01885045
+```
+
